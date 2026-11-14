@@ -1,43 +1,65 @@
-# Install
+# RNNTrialStructures.py
 
-## Using conda
+Python interface to the Julia navigation-trial generator.
+
+## Install
 
 ```bash
-conda create -y -n trialstructs
-conda activate trialstructs
-conda install pip
-pip install git+https://github.com/grero/RNNTrialStructures.py.git 
+pip install git+https://github.com/SIONMATHEW/RNNTrialStructures.py.git
 ```
 
+The Python package pins the Julia implementation to an immutable revision.
 
-# Usage
-
-Create a navigation trial structure where each trial has between 20 and 50 time steps, using distance and head direction as inputs and position as output. Then,
-create a batch_generator to return 500 trials of input `x`, output `y` and mask `w`. 
-```python
->>> import RNNTrialStructures
->>> trialstruct = RNNTrialStructures.get_navigation_trialstruct(20,50, ["distance","head_direction"],["position"])
->>> batch_generator = RNNTrialStructures.get_batch_generator(trialstruct, 500)
->>> x,y,w = batch_generator()
-```
-
-The mask is mainly relevant for selecting the valid time steps for a trial when computing the cost function, e.g.
+## Explicit configuration
 
 ```python
-import numpy as np
-q = np.multiply(w, y).sum(1)
-```
-would only include valid time steps.
+import RNNTrialStructures as rts
 
-We can also create a trial structure where the output is the conjunction of position and gaze. To reduce the dimensionality of the conjunction output,
-we'll use a binsize of 2 units for the floor of the arena, and 5 units for the walls. This will result in a conjunction dimension of 504.
+config = rts.NavigationConfig(
+    min_n_steps=80,
+    max_n_steps=120,
+    inputs=("distance", "movement", "texture"),
+    outputs=("conjunction",),
+    arena=rts.ArenaConfig(preset="legacy_four_pillar"),
+)
+
+trial = rts.make_navigation_trialstruct(config)
+generator = rts.get_batch_generator(
+    trial,
+    256,
+    trajectory_seed=10_001,
+    binsize=2.0,
+    binsize_wall=5.0,
+    named=True,
+)
+batch = generator()
+```
+
+`batch.inputs`, `batch.targets`, and `batch.valid_mask` retain Julia's
+`(feature, time, trial)` axis order. Compact `place_bin`, `surface_bin`, and
+`joint_bin` arrays use `(time, trial)`; continuous `position_xy` and `gaze_xy`
+use `(coordinate, time, trial)`. The mask is zero on padded timesteps.
+
+Three tested presets are available:
+
+- `legacy_four_pillar`: original four-pillar experiment.
+- `open`: four textured outer walls and no pillars.
+- `occluded`: the same outer walls plus four separately textured pillars.
+
+Use a different `trajectory_seed` namespace for training, validation, and
+testing. `SeedConfig` provides non-overlapping defaults.
+
+## Backward-compatible API
 
 ```python
->>> import RNNTrialStructures
->>> trialstruct = RNNTrialStructures.get_navigation_trialstruct(20,50, ["distance","movement","texture"],["conjunction"])
->>> batch_generator = RNNTrialStructures.get_batch_generator(trialstruct, 500,binsize=2.0, binsize_wall=5.0)
->>> x,y,w = batch_generator()
+trial = rts.get_navigation_trialstruct(
+    20,
+    50,
+    ["distance", "movement", "texture"],
+    ["conjunction"],
+)
+raw_generator = rts.get_batch_generator(trial, 500)
+x, y, mask = raw_generator()
 ```
 
-![Illustration of the default four pillar maze](assets/default_arena_layout.png)
-Layout of the default 4 pillar arena.
+Calls without an arena preset continue to use `legacy_four_pillar`.
